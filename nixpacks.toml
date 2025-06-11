@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["openjdk"]
+
+[phases.build]
+cmds = ["./gradlew clean shadowJar"]
+
+[phases.start]
+cmd = "java -jar build/libs/tu-app-all.jar"
