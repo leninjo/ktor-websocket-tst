@@ -5,4 +5,4 @@ nixPkgs = ["openjdk"]
 cmds = ["chmod +x gradlew", "./gradlew clean shadowJar"]
 
 [phases.start]
-cmd = "java -jar build/libs/tu-app-all.jar"
+cmd = "java -jar build/libs/ktor-websocket-server-0.0.1-all.jar"
