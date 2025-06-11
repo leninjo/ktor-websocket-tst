@@ -5,6 +5,7 @@ nixPkgs = ["openjdk"]
 cmds = [
     "chmod +x gradlew",
     "./gradlew clean shadowJar",
+    "echo LS",
     "ls -l build/libs/"
 ]
 
