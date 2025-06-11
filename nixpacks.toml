@@ -2,7 +2,11 @@
 nixPkgs = ["openjdk"]
 
 [phases.build]
-cmds = ["chmod +x gradlew", "./gradlew clean shadowJar"]
+cmds = [
+    "chmod +x gradlew",
+    "./gradlew clean shadowJar",
+    "ls -l build/libs/"
+]
 
 [phases.start]
 cmd = "java -jar build/libs/ktor-websocket-server-0.0.1-all.jar"
