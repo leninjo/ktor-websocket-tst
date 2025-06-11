@@ -2,7 +2,7 @@
 nixPkgs = ["openjdk"]
 
 [phases.build]
-cmds = ["./gradlew clean shadowJar"]
+cmds = ["chmod +x gradlew", "./gradlew clean shadowJar"]
 
 [phases.start]
 cmd = "java -jar build/libs/tu-app-all.jar"
