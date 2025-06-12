@@ -39,6 +39,8 @@ fun Application.configureSockets() {
                                 val data = json.decodeFromJsonElement<RegisterData>(message.data!!)
                                 val expectedToken = generateToken(data.clientId)
 
+                                println("TOKEN ESPERADO: $expectedToken")
+
                                 if (data.authToken != expectedToken) {
                                     println("❌ Invalid token for ${data.clientId}")
                                     close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Invalid auth token"))
