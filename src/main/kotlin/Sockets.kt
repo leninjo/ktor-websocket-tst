@@ -19,7 +19,7 @@ fun Application.configureSockets() {
         masking = false
     }
     routing {
-        val connections = mutableMapOf<String, DefaultWebSocketServerSession>()
+        val connections = mutableMapOf<String, DeviceConnections>()
 
         webSocket("/ws") {
             var clientId: String? = null
@@ -44,59 +44,82 @@ fun Application.configureSockets() {
                                     close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Invalid auth token"))
                                     return@webSocket
                                 }
+
                                 clientId = data.clientId
-                                connections[clientId] = this
-                                println("Client registered: $clientId")
-                                send(Frame.Text("✅ Registered as $clientId"))
+                                val deviceConnections = connections.getOrPut(clientId) { DeviceConnections() }
+
+                                when (data.role) {
+                                    "web" -> {
+                                        deviceConnections.web = this
+                                        println("🌐 Web client registered: $clientId")
+                                        send(Frame.Text("✅ Web registrada por $clientId"))
+                                    }
+                                    "app" -> {
+                                        deviceConnections.app = this
+                                        println("📱 App client registered: $clientId")
+                                        send(Frame.Text("✅ App registrada por $clientId"))
+                                    }
+                                    else -> {
+                                        send(Frame.Text("❌ Rol invalido"))
+                                        return@webSocket
+                                    }
+                                }
                             }
                             "send_to_app" -> {
-                                if (clientId == null) {
-                                    send(Frame.Text("❌ You must register first"))
-                                    continue
-                                }
-
                                 val data = json.decodeFromJsonElement<SendMessageData>(message.data!!)
-                                val targetSession = connections[data.to]
-                                println("➡️ [FORWARD] $clientId to ${data.to}: ${data.message}")
+                                val target = connections[data.to]?.app
 
-                                if (targetSession != null) {
-                                    targetSession.send(Frame.Text("Message from $clientId: ${data.message}"))
+                                if (target != null) {
+                                    println("➡️ Web ${clientId} → App ${data.to}: ${data.message}")
+                                    target.send(Frame.Text(data.message))
                                 } else {
-                                    outgoing.send(Frame.Text("Target ${data.to} not connected"))
+                                    send(Frame.Text("❌ App ${data.to} no conectado"))
                                 }
                             }
                             "send_to_web" -> {
-                                if (clientId == null) {
-                                    send(Frame.Text("❌ You must register first"))
-                                    continue
-                                }
-
                                 val data = json.decodeFromJsonElement<SendMessageData>(message.data!!)
-                                val targetSession = connections[data.to]
-                                println("➡️ [FORWARD] $clientId to ${data.to}: ${data.message}")
+                                val target = connections[data.to]?.web
 
-                                if (targetSession != null) {
-                                    targetSession.send(Frame.Text("Response from App: ${data.message}"))
+                                if (target != null) {
+                                    println("⬅️ App ${clientId} → Web ${data.to}: ${data.message}")
+                                    target.send(Frame.Text(data.message))
                                 } else {
-                                    outgoing.send(Frame.Text("Web target ${data.to} not connected"))
+                                    send(Frame.Text("❌ Web ${data.to} no conectado"))
                                 }
                             }
                         }
                     }
                 }
             } finally {
-                clientId?.let { connections.remove(it) }
-                println("❌ Client disconnected: $clientId")
+                clientId?.let {
+                    val device = connections[it]
+                    if (device?.web == this) device.web = null
+                    if (device?.app == this) device.app = null
+
+                    if (device?.web == null && device?.app == null) {
+                        connections.remove(it)
+                    }
+                    println("❌ Desconectado $clientId (${if (device?.web == this) "web" else "app"})")
+                }
             }
         }
     }
 }
 
+data class DeviceConnections(
+    var web: DefaultWebSocketServerSession? = null,
+    var app: DefaultWebSocketServerSession? = null
+)
+
 @Serializable
 data class ClientMessage(val type: String, val data: JsonElement? = null)
 
 @Serializable
-data class RegisterData(val clientId: String, val authToken: String)
+data class RegisterData(
+    val clientId: String,
+    val role: String,
+    val authToken: String
+)
 
 @Serializable
 data class SendMessageData(val to: String, val message: String)
