@@ -1,16 +1,16 @@
+@file:Suppress("CAST_NEVER_SUCCEEDS")
+
 package com.example
 
 import io.ktor.server.application.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
-import io.ktor.websocket.Frame.*
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import java.security.MessageDigest
@@ -79,75 +79,55 @@ fun Application.configureSockets() {
 
                                 /* ---------- WEB → APP ---------- */
                                 "send_to_app" -> {
-                                    val req = json.decodeFromJsonElement<SendMessageRequest>(envelope.data!!)
+                                    val base = json.decodeFromJsonElement<SendMessageWeb>(envelope.data!!)
 
-                                    val method = req.method.toMethodOrNull()
-                                    if (method == null) {
-                                        send(Frame.Text("Método '${req.method}' no válido. Usa: getTerminal, getCardData o printVoucher."))
-                                        continue
-                                    }
-
-                                    if (method == Method.PRINT_VOUCHER) {
-                                        if (req.body == null || req.body == JsonNull) {
-                                            send(Frame.Text("El campo 'body' es obligatorio para el método 'printVoucher'."))
-                                            continue
-                                        }
-
-                                        if (req.body !is JsonObject) {
-                                            send(Frame.Text("El campo 'body' debe ser un objeto JSON válido."))
-                                            continue
+                                    when (base.method) {
+                                        Method.GET_TERMINAL -> {}
+                                        Method.GET_CARD_DATA -> {}
+                                        Method.PRINT_VOUCHER -> {
+                                            json.decodeFromJsonElement(JsonObject.serializer(), base.body)
                                         }
                                     }
 
-                                    val target = connections[req.to]?.app
+                                    val target = connections[base.to]?.app
 
                                     if (target != null) {
-                                        println("➡️ Web $clientId → App ${req.to}: ${req.method}")
+                                        println("➡️ Web $clientId → App ${base.to}: ${base.method}")
                                         target.send(Frame.Text(text))
                                     } else {
-                                        send(Frame.Text("App ${req.to} no conectado"))
+                                        send(Frame.Text("App ${base.to} no conectado"))
                                     }
                                 }
 
                                 /* ---------- APP → WEB ---------- */
                                 "send_to_web" -> {
-                                    val req = json.decodeFromJsonElement<SendMessageRequestApp>(envelope.data!!)
-                                    val target = connections[req.to]?.web
+                                    val base = json.decodeFromJsonElement<SendMessageApp>(envelope.data!!)
 
-                                    val method = req.method.toMethodOrNull()
-                                    if (method == null) {
-                                        send(Frame.Text("Método '${req.method}' no válido. Usa: getTerminal o getCardData."))
-                                        continue
-                                    }
-
-                                    val responseObj = req.response as? JsonObject
-                                    if (responseObj == null) {
-                                        send(Frame.Text("El campo 'response' debe ser un objeto JSON válido."))
-                                        continue
-                                    }
-
-                                    when (method) {
+                                    when (base.method) {
                                         Method.GET_TERMINAL -> {
-                                            if (!responseObj.containsKey("terminal")) {
-                                                send(Text("Falta el campo 'terminal' en la respuesta de getTerminal."))
-                                                continue
-                                            }
+                                            json.decodeFromJsonElement(
+                                                GetTerminalResponse.serializer(), base.response
+                                            )
                                         }
                                         Method.GET_CARD_DATA -> {
-                                            if (!responseObj.containsKey("cardString")) {
-                                                send(Text("Falta el campo 'cardString' en la respuesta de getCardData."))
-                                                continue
-                                            }
+                                            json.decodeFromJsonElement(
+                                                GetCardDataResponse.serializer(), base.response
+                                            )
                                         }
-
-                                        Method.PRINT_VOUCHER -> {}
+                                        Method.PRINT_VOUCHER -> {
+                                            json.decodeFromJsonElement(
+                                                PrintVoucherResponseApp.serializer(), base.response
+                                            )
+                                        }
                                     }
 
+                                    val target = connections[base.to]?.web
+
                                     if (target != null) {
-                                        println("⬅️ App $clientId → Web ${req.to}: ${req.method}")
+                                        println("⬅️ App $clientId → Web ${base.to}: ${base.method}")
                                         target.send(Frame.Text(text))
                                     } else {
-                                        send(Frame.Text("Web ${req.to} no conectado"))
+                                        send(Frame.Text("Web ${base.to} no conectado"))
                                     }
                                 }
 
@@ -157,9 +137,9 @@ fun Application.configureSockets() {
                             }
 
                         } catch (e: SerializationException) {
-                            send(Frame.Text("Formato inválido del mensaje: ${e.localizedMessage}"))
+                            send(Frame.Text(e.localizedMessage))
                         } catch (e: IllegalArgumentException) {
-                            send(Frame.Text("Error inesperado: ${e.localizedMessage}"))
+                            send(Frame.Text(e.localizedMessage))
                         }
                     }
                 }
@@ -195,8 +175,13 @@ data class RegisterData(
 )
 
 enum class Method {
+    @SerialName("getTerminal")
     GET_TERMINAL,
+
+    @SerialName("getCardData")
     GET_CARD_DATA,
+
+    @SerialName("printVoucher")
     PRINT_VOUCHER
 }
 
@@ -208,17 +193,50 @@ fun String.toMethodOrNull(): Method? = when (this) {
 }
 
 @Serializable
-data class SendMessageRequest(
+enum class Status { success, fail }
+
+@Serializable
+sealed interface AppResponse
+
+@Serializable @SerialName("getTerminal")
+data class GetTerminalResponse(
+    val status: Status,
+    val statusMsg: String,
+    val terminal: String
+) : AppResponse
+
+@Serializable @SerialName("getCardData")
+data class GetCardDataResponse(
+    val status: Status,
+    val statusMsg: String,
+    val cardString: String
+) : AppResponse
+
+@Serializable
+data class PrintVoucherResponseApp(
+    val status: Status,
+    val statusMsg: String
+) : AppResponse
+
+@Serializable
+data class PrintVoucherResponseWeb(
+    val body: JsonObject
+) : AppResponse
+
+@Serializable
+data class SendMessageApp(
+    val type: String = "send_to_web",
     val to: String,
-    val method: String,
-    val body: JsonElement? = null
+    val method: Method,
+    val response: JsonElement
 )
 
 @Serializable
-data class SendMessageRequestApp(
+data class SendMessageWeb(
+    val type: String = "send_to_app",
     val to: String,
-    val method: String,
-    val response: JsonElement
+    val method: Method,
+    val body: JsonElement
 )
 
 fun generateToken(clientId: String, secret: String = "clave-maestra-oculta"): String {
