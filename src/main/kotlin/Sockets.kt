@@ -101,6 +101,11 @@ fun Application.configureSockets() {
                                         continue
                                     }
 
+                                    if (base.method == Method.PRINT_VOUCHER && base.body == null) {
+                                        safeSend(this, "❌ 'body' es obligatorio para printVoucher")
+                                        continue
+                                    }
+
                                     val target = connections[base.to]?.app
                                     if (target != null) {
                                         println("➡️ Web $clientId → App ${base.to}: ${base.method}")
@@ -246,7 +251,7 @@ data class SendMessageWeb(
     val type: String = "send_to_app",
     val to: String,
     val method: Method,
-    val body: JsonElement
+    val body: JsonElement? = null
 )
 
 fun generateToken(clientId: String, secret: String = "clave-maestra-oculta"): String {
