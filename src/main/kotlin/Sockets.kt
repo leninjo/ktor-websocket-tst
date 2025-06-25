@@ -23,124 +23,133 @@ fun Application.configureSockets() {
         maxFrameSize = Long.MAX_VALUE
         masking = false
     }
+
     routing {
         val connections = mutableMapOf<String, DeviceConnections>()
 
-        webSocket("/ws") {
+        suspend fun safeSend(session: DefaultWebSocketServerSession?, message: String): Boolean {
+            return try {
+                session?.send(Frame.Text(message))
+                true
+            } catch (e: Exception) {
+                println("❌ Error al enviar mensaje: ${e.localizedMessage}")
+                false
+            }
+        }
 
+        webSocket("/ws") {
             var clientId: String? = null
             val json = Json { ignoreUnknownKeys = true }
 
             try {
                 for (frame in incoming) {
-                    if (frame is Frame.Text) {
-                        val text = frame.readText()
-                        println("📩 [RECEIVED] From ${clientId ?: "Unknown"}: $text")
+                    try {
+                        if (frame is Frame.Text) {
+                            val text = frame.readText()
+                            println("📩 [RECEIVED] From ${clientId ?: "Unknown"}: $text")
 
-                        try {
-                            val envelope = json.decodeFromString<ClientMessage>(text)
+                            val envelope = try {
+                                json.decodeFromString<ClientMessage>(text)
+                            } catch (e: Exception) {
+                                safeSend(this, "❌ Formato inválido: ${e.localizedMessage}")
+                                continue
+                            }
 
                             when (envelope.type) {
                                 "register" -> {
-                                    val data = json.decodeFromJsonElement<RegisterData>(envelope.data!!)
-                                    val expectedToken = generateToken(data.clientId)
+                                    val data = try {
+                                        json.decodeFromJsonElement<RegisterData>(envelope.data!!)
+                                    } catch (e: Exception) {
+                                        safeSend(this, "❌ Error en datos de registro")
+                                        continue
+                                    }
 
+                                    val expectedToken = generateToken(data.clientId)
                                     if (data.authToken != expectedToken) {
                                         println("❌ Invalid token for ${data.clientId}")
-                                        close(
-                                            CloseReason(
-                                                CloseReason.Codes.VIOLATED_POLICY,
-                                                "Invalid auth token"
-                                            )
-                                        )
+                                        close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Invalid auth token"))
                                         return@webSocket
                                     }
 
                                     clientId = data.clientId
-                                    val dev = connections.getOrPut(clientId) { DeviceConnections() }
+                                    val device = connections.getOrPut(clientId) { DeviceConnections() }
 
                                     when (data.role) {
                                         "web" -> {
-                                            dev.web = this
-                                            send(Frame.Text("✅ Web registrada por $clientId"))
+                                            device.web = this
                                             println("🌐 Web client registered: $clientId")
+                                            safeSend(this, "✅ Web registrada por $clientId")
                                         }
+
                                         "app" -> {
-                                            dev.app = this
-                                            send(Frame.Text("✅ App registrada por $clientId"))
+                                            device.app = this
                                             println("📱 App client registered: $clientId")
+                                            safeSend(this, "✅ App registrada por $clientId")
                                         }
-                                        else  -> {
-                                            send(Frame.Text("❌ Rol inválido"))
-                                            continue
+
+                                        else -> {
+                                            safeSend(this, "❌ Rol inválido")
                                         }
                                     }
                                 }
 
-                                /* ---------- WEB → APP ---------- */
                                 "send_to_app" -> {
-                                    val base = json.decodeFromJsonElement<SendMessageWeb>(envelope.data!!)
-
-                                    when (base.method) {
-                                        Method.GET_TERMINAL -> {}
-                                        Method.GET_CARD_DATA -> {}
-                                        Method.PRINT_VOUCHER -> {
-                                            json.decodeFromJsonElement(JsonObject.serializer(), base.body)
-                                        }
+                                    val base = try {
+                                        json.decodeFromJsonElement<SendMessageWeb>(envelope.data!!)
+                                    } catch (e: Exception) {
+                                        safeSend(this, "❌ Error en datos de send_to_app: ${e.localizedMessage}")
+                                        continue
                                     }
 
                                     val target = connections[base.to]?.app
-
                                     if (target != null) {
                                         println("➡️ Web $clientId → App ${base.to}: ${base.method}")
-                                        target.send(Frame.Text(text))
+                                        if (!safeSend(target, text)) {
+                                            safeSend(this, "❌ Falló envío a App ${base.to}")
+                                        }
                                     } else {
-                                        send(Frame.Text("App ${base.to} no conectado"))
+                                        safeSend(this, "❌ App ${base.to} no conectado")
                                     }
                                 }
 
-                                /* ---------- APP → WEB ---------- */
                                 "send_to_web" -> {
-                                    val base = json.decodeFromJsonElement<SendMessageApp>(envelope.data!!)
+                                    val base = try {
+                                        json.decodeFromJsonElement<SendMessageApp>(envelope.data!!)
+                                    } catch (e: Exception) {
+                                        safeSend(this, "❌ Error en datos de send_to_web: ${e.localizedMessage}")
+                                        continue
+                                    }
 
-                                    when (base.method) {
-                                        Method.GET_TERMINAL -> {
-                                            json.decodeFromJsonElement(
-                                                GetTerminalResponse.serializer(), base.response
-                                            )
+                                    try {
+                                        when (base.method) {
+                                            Method.GET_TERMINAL -> json.decodeFromJsonElement(GetTerminalResponse.serializer(), base.response)
+                                            Method.GET_CARD_DATA -> json.decodeFromJsonElement(GetCardDataResponse.serializer(), base.response)
+                                            Method.PRINT_VOUCHER -> json.decodeFromJsonElement(PrintVoucherResponseApp.serializer(), base.response)
                                         }
-                                        Method.GET_CARD_DATA -> {
-                                            json.decodeFromJsonElement(
-                                                GetCardDataResponse.serializer(), base.response
-                                            )
-                                        }
-                                        Method.PRINT_VOUCHER -> {
-                                            json.decodeFromJsonElement(
-                                                PrintVoucherResponseApp.serializer(), base.response
-                                            )
-                                        }
+                                    } catch (e: Exception) {
+                                        safeSend(this, "❌ Error parseando respuesta: ${e.localizedMessage}")
+                                        continue
                                     }
 
                                     val target = connections[base.to]?.web
-
                                     if (target != null) {
                                         println("⬅️ App $clientId → Web ${base.to}: ${base.method}")
-                                        target.send(Frame.Text(text))
+                                        if (!safeSend(target, text)) {
+                                            safeSend(this, "❌ Falló envío a Web ${base.to}")
+                                        }
                                     } else {
-                                        send(Frame.Text("Web ${base.to} no conectado"))
+                                        safeSend(this, "❌ Web ${base.to} no conectado")
                                     }
                                 }
 
                                 else -> {
-                                    send(Frame.Text("Tipo de mensaje no soportado"))
+                                    safeSend(this, "❌ Tipo de mensaje no soportado: ${envelope.type}")
                                 }
                             }
-
-                        } catch (e: SerializationException) {
-                            send(Frame.Text(e.localizedMessage))
-                        } catch (e: IllegalArgumentException) {
-                            send(Frame.Text(e.localizedMessage))
                         }
+                    } catch (e: Exception) {
+                        println("❌ Error procesando mensaje: ${e.localizedMessage}")
+                        safeSend(this, "❌ Error interno: ${e.localizedMessage}")
                     }
                 }
             } finally {
@@ -152,7 +161,8 @@ fun Application.configureSockets() {
                     if (device?.web == null && device?.app == null) {
                         connections.remove(it)
                     }
-                    println("Desconectado $clientId (${if (device?.web == this) "web" else "app"})")
+
+                    println("🔌 Desconectado $clientId")
                 }
             }
         }
