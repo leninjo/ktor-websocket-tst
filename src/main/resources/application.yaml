@@ -5,8 +5,8 @@ ktor:
     deployment:
         port: 8080
     engine:
-        connectionGroupSize: 2   # número de hilos para aceptar conexiones
-        workerGroupSize: 16      # hilos para manejar IO (Netty)
-        callGroupSize: 32        # hilos para manejar tus corutinas
-        requestQueueLimit: 8192  # cola de solicitudes pendientes
+        connectionGroupSize: 4    # número de hilos para aceptar conexiones
+        workerGroupSize: 64       # hilos para manejar IO (Netty)
+        callGroupSize: 128        # hilos para manejar tus corutinas
+        requestQueueLimit: 100000 # cola de solicitudes pendientes
         responseWriteTimeoutSeconds: 60
