@@ -4,6 +4,8 @@ import io.ktor.server.application.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -12,6 +14,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration.Companion.seconds
 
 fun Application.configureSockets() {
@@ -34,18 +37,31 @@ fun Application.configureSockets() {
     routing {
         val connections = ConcurrentHashMap<String, DeviceConnections>()
 
-        suspend fun safeSend(session: DefaultWebSocketServerSession?, message: String): Boolean {
-            return try {
-                session?.send(Frame.Text(message))
-                true
-            } catch (e: Exception) {
-                println("❌ Error al enviar mensaje: ${e.localizedMessage}")
-                false
-            }
-        }
-
         webSocket("/ws") {
-            var clientId: String? = null
+            val clientIdRef = AtomicReference<String?>(null)
+
+            suspend fun safeSend(
+                session: DefaultWebSocketServerSession?,
+                message: String
+            ): Boolean {
+                return try {
+                    session?.send(Frame.Text(message))
+                    true
+                } catch (e: Exception) {
+                    println("❌ Error al enviar mensaje: ${e.localizedMessage}")
+                    val clientId = clientIdRef.get()
+                    if (clientId != null) {
+                        val device = connections[clientId]
+                        if (device?.web == session) device?.web = null
+                        if (device?.app == session) device?.app = null
+                        if (device?.web == null && device?.app == null) {
+                            connections.remove(clientId)
+                            println("🧹 Cliente eliminado por error: $clientId")
+                        }
+                    }
+                    false
+                }
+            }
 
             try {
 
@@ -53,12 +69,12 @@ fun Application.configureSockets() {
                     try {
                         if (frame is Frame.Text) {
                             val text = frame.readText()
-                            println("📩 [RECEIVED] From ${clientId ?: "Unknown"}: $text")
+                            println("📩 [RECEIVED] From ${clientIdRef.get() ?: "Unknown"}: $text")
 
                             val envelope = try {
                                 json.decodeFromString<ClientMessage>(text)
                             } catch (e: Exception) {
-                                safeSend(this, "❌ Formato inválido: ${e.localizedMessage}")
+                                safeSend(this@webSocket, "❌ Formato inválido: ${e.localizedMessage}")
                                 continue
                             }
 
@@ -67,7 +83,7 @@ fun Application.configureSockets() {
                                     val data = try {
                                         json.decodeFromJsonElement<RegisterData>(envelope.data!!)
                                     } catch (e: Exception) {
-                                        safeSend(this, "❌ Error en datos de registro")
+                                        safeSend(this@webSocket, "❌ Error en datos de registro")
                                         continue
                                     }
 
@@ -78,24 +94,26 @@ fun Application.configureSockets() {
                                         continue
                                     }
 
-                                    clientId = data.clientId
+                                    clientIdRef.set(data.clientId)
+
+                                    val clientId = clientIdRef.get()
                                     val device = connections.getOrPut(clientId) { DeviceConnections() }
 
                                     when (data.role) {
                                         "web" -> {
-                                            device.web = this
+                                            device.web = this@webSocket
                                             println("🌐 Web client registered: $clientId")
-                                            safeSend(this, "✅ Web registrada por $clientId")
+                                            safeSend(this@webSocket, "✅ Web registrada por $clientId")
                                         }
 
                                         "app" -> {
-                                            device.app = this
+                                            device.app = this@webSocket
                                             println("📱 App client registered: $clientId")
-                                            safeSend(this, "✅ App registrada por $clientId")
+                                            safeSend(this@webSocket, "✅ App registrada por $clientId")
                                         }
 
                                         else -> {
-                                            safeSend(this, "❌ Rol inválido")
+                                            safeSend(this@webSocket, "❌ Rol inválido")
                                         }
                                     }
                                 }
@@ -104,23 +122,25 @@ fun Application.configureSockets() {
                                     val base = try {
                                         json.decodeFromJsonElement<SendMessageWeb>(envelope.data!!)
                                     } catch (e: Exception) {
-                                        safeSend(this, "❌ Error en datos de send_to_app: ${e.localizedMessage}")
+                                        safeSend(this@webSocket, "❌ Error en datos de send_to_app: ${e.localizedMessage}")
                                         continue
                                     }
 
                                     if (base.method == Method.PRINT_VOUCHER && base.body == null) {
-                                        safeSend(this, "❌ 'body' es obligatorio para printVoucher")
+                                        safeSend(this@webSocket, "❌ 'body' es obligatorio para printVoucher")
                                         continue
                                     }
 
                                     val target = connections[base.to]?.app
                                     if (target != null) {
+                                        val clientId = clientIdRef.get()
+
                                         println("➡️ Web $clientId → App ${base.to}: ${base.method}")
                                         if (!safeSend(target, text)) {
-                                            safeSend(this, "❌ Falló envío a App ${base.to}")
+                                            safeSend(this@webSocket, "❌ Falló envío a App ${base.to}")
                                         }
                                     } else {
-                                        safeSend(this, "❌ App ${base.to} no conectado")
+                                        safeSend(this@webSocket, "❌ App ${base.to} no conectado")
                                     }
                                 }
 
@@ -128,7 +148,7 @@ fun Application.configureSockets() {
                                     val base = try {
                                         json.decodeFromJsonElement<SendMessageApp>(envelope.data!!)
                                     } catch (e: Exception) {
-                                        safeSend(this, "❌ Error en datos de send_to_web: ${e.localizedMessage}")
+                                        safeSend(this@webSocket, "❌ Error en datos de send_to_web: ${e.localizedMessage}")
                                         continue
                                     }
 
@@ -139,42 +159,47 @@ fun Application.configureSockets() {
                                             Method.PRINT_VOUCHER -> json.decodeFromJsonElement(PrintVoucherResponseApp.serializer(), base.response)
                                         }
                                     } catch (e: Exception) {
-                                        safeSend(this, "❌ Error parseando respuesta: ${e.localizedMessage}")
+                                        safeSend(this@webSocket, "❌ Error parseando respuesta: ${e.localizedMessage}")
                                         continue
                                     }
 
                                     val target = connections[base.to]?.web
                                     if (target != null) {
+                                        val clientId = clientIdRef.get()
                                         println("⬅️ App $clientId → Web ${base.to}: ${base.method}")
                                         if (!safeSend(target, text)) {
-                                            safeSend(this, "❌ Falló envío a Web ${base.to}")
+                                            safeSend(this@webSocket, "❌ Falló envío a Web ${base.to}")
                                         }
                                     } else {
-                                        safeSend(this, "❌ Web ${base.to} no conectado")
+                                        safeSend(this@webSocket, "❌ Web ${base.to} no conectado",)
                                     }
                                 }
 
                                 else -> {
-                                    safeSend(this, "❌ Tipo de mensaje no soportado: ${envelope.type}")
+                                    safeSend(this@webSocket, "❌ Tipo de mensaje no soportado: ${envelope.type}")
                                 }
                             }
                         }
                     } catch (e: Exception) {
                         println("❌ Error procesando mensaje: ${e.localizedMessage}")
-                        safeSend(this, "❌ Error interno: ${e.localizedMessage}")
+                        safeSend(this@webSocket, "❌ Error interno: ${e.localizedMessage}")
                     }
                 }
             } finally {
-                clientId?.let {
-                    val device = connections[it]
+                val clientId = clientIdRef.get()
+
+                if (clientId != null) {
+                    val device = connections[clientId]
                     if (device?.web == this) device.web = null
                     if (device?.app == this) device.app = null
 
                     if (device?.web == null && device?.app == null) {
-                        connections.remove(it)
+                        connections.remove(clientId)
                     }
 
-                    println("🔌 Desconectado $clientId")
+                    val close = closeReason.await()
+                    println("🔌 Cierre conexión $clientId con motivo: ${close?.message}")
+                    println("👥 Conexiones activas: ${connections.size}")
                 }
             }
         }
