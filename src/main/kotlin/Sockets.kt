@@ -4,6 +4,7 @@ import io.ktor.server.application.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
 import io.ktor.websocket.*
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.serialization.SerialName
@@ -28,14 +29,45 @@ fun Application.configureSockets() {
         }
     }
 
-    val json = Json {
-        ignoreUnknownKeys = true
-        encodeDefaults = false
-        coerceInputValues = true
-    }
-
     routing {
+        val instanceId = System.getenv("INSTANCE_ID") ?: "?"
         val connections = ConcurrentHashMap<String, DeviceConnections>()
+        val json = Json { ignoreUnknownKeys = true; encodeDefaults = false; coerceInputValues = true }
+
+        RedisPubSub.init(System.getenv("REDIS_HOST") ?: "localhost") { message ->
+            val parts = message.split("|||origin=")
+            val payload = parts[0]
+            try {
+                val envelope = json.decodeFromString<ClientMessage>(payload)
+
+                val baseTo = when (envelope.type) {
+                    "send_to_app" -> json.decodeFromJsonElement<SendMessageWeb>(envelope.data!!).to
+                    "send_to_web" -> json.decodeFromJsonElement<SendMessageApp>(envelope.data!!).to
+                    else -> null
+                }
+
+                baseTo?.let {
+                    val target = if (envelope.type == "send_to_app") {
+                        connections[it]?.app
+                    } else {
+                        connections[it]?.web
+                    }
+
+                    if (target != null) {
+                        CoroutineScope(Dispatchers.IO).launch {
+                            try {
+                                target.send(Frame.Text(payload))
+                            } catch (e: Exception) {
+                                println("➡️ Mensaje reenviado desde instancia $instanceId via Redis a ${baseTo}")
+                            }
+                        }
+                    }
+                }
+
+            } catch (e: Exception) {
+                println("❌ Error al manejar mensaje de Redis: ${e.localizedMessage}")
+            }
+        }
 
         webSocket("/ws") {
             val clientIdRef = AtomicReference<String?>(null)
@@ -103,13 +135,13 @@ fun Application.configureSockets() {
                                         "web" -> {
                                             device.web = this@webSocket
                                             println("🌐 Web client registered: $clientId")
-                                            safeSend(this@webSocket, "✅ Web registrada por $clientId")
+                                            safeSend(this@webSocket, "✅ Web registrada por $clientId en instancia $instanceId")
                                         }
 
                                         "app" -> {
                                             device.app = this@webSocket
                                             println("📱 App client registered: $clientId")
-                                            safeSend(this@webSocket, "✅ App registrada por $clientId")
+                                            safeSend(this@webSocket, "✅ App registrada por $clientId en instancia $instanceId")
                                         }
 
                                         else -> {
@@ -140,6 +172,7 @@ fun Application.configureSockets() {
                                             safeSend(this@webSocket, "❌ Falló envío a App ${base.to}")
                                         }
                                     } else {
+                                        RedisPubSub.publish(text)
                                         safeSend(this@webSocket, "❌ App ${base.to} no conectado")
                                     }
                                 }
@@ -171,6 +204,7 @@ fun Application.configureSockets() {
                                             safeSend(this@webSocket, "❌ Falló envío a Web ${base.to}")
                                         }
                                     } else {
+                                        RedisPubSub.publish(text)
                                         safeSend(this@webSocket, "❌ Web ${base.to} no conectado",)
                                     }
                                 }

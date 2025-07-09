@@ -1,0 +1,29 @@
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  ktor-ws-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - INSTANCE_ID=1
+      - REDIS_HOST=redis
+    ports:
+      - "8081:8080"
+    depends_on:
+      - redis
+
+  ktor-ws-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - INSTANCE_ID=2
+      - REDIS_HOST=redis
+    ports:
+      - "8082:8080"
+    depends_on:
+      - redis
