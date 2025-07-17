@@ -34,7 +34,7 @@ fun Application.configureSockets() {
         val connections = ConcurrentHashMap<String, DeviceConnections>()
         val json = Json { ignoreUnknownKeys = true; encodeDefaults = false; coerceInputValues = true }
 
-        RedisPubSub.init(System.getenv("REDIS_HOST") ?: "localhost") { message ->
+        RedisPubSub.init("10.0.0.3") { message ->
             val parts = message.split("|||origin=")
             val payload = parts[0]
             try {
