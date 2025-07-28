@@ -18,10 +18,19 @@ repositories {
     mavenCentral()
 }
 
+java {
+    toolchain {
+        languageVersion.set(JavaLanguageVersion.of(17))
+    }
+}
+
 graalvmNative {
     toolchainDetection.set(false)
     binaries {
         named("main") {
+            javaLauncher.set(javaToolchains.launcherFor {
+                languageVersion.set(JavaLanguageVersion.of(17))
+            })
             useFatJar.set(true)
             imageName.set("ktor-websocket-server")
             buildArgs.addAll(
