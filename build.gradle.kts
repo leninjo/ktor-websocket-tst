@@ -4,6 +4,7 @@ plugins {
     kotlin("plugin.serialization") version "1.9.0"
     id("com.github.johnrengelman.shadow") version "8.1.1"
     id("application")
+    id("org.graalvm.buildtools.native") version "0.11.0"
 }
 
 group = "com.example"
@@ -15,6 +16,30 @@ application {
 
 repositories {
     mavenCentral()
+}
+
+graalvmNative {
+    toolchainDetection.set(false)
+    binaries {
+        named("main") {
+            useFatJar.set(true)
+            imageName.set("ktor-websocket-server")
+            buildArgs.addAll(
+                "-H:-CheckToolchain",
+                "--no-fallback",
+                "-H:+ReportExceptionStackTraces",
+                "--verbose"
+            )
+        }
+    }
+}
+
+tasks.named("nativeCompile") {
+    doFirst {
+        exec {
+            commandLine("docker", "--version")
+        }
+    }
 }
 
 dependencies {
