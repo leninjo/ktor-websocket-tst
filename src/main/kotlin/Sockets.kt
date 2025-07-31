@@ -40,7 +40,9 @@ fun Application.configureSockets() {
         val redisHost = redisUri.host
         val redisPort = redisUri.port.takeIf { it != -1 } ?: 6379
 
-        RedisPubSub.init(redisHost, redisPort) { message ->
+        val redisFullUrl = "redis://$redisHost:$redisPort"
+
+        RedisPubSub.init(redisFullUrl) { message ->
             val parts = message.split("|||origin=")
             val payload = parts[0]
             try {
