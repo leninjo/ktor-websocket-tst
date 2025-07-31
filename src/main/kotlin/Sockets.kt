@@ -13,6 +13,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import java.net.URI
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicReference
@@ -35,8 +36,11 @@ fun Application.configureSockets() {
         val json = Json { ignoreUnknownKeys = true; encodeDefaults = false; coerceInputValues = true }
 
         val redisUrl = System.getenv("REDIS_URL") ?: throw IllegalStateException("Missing REDIS_URL env var")
+        val redisUri = URI(redisUrl)
+        val redisHost = redisUri.host
+        val redisPort = redisUri.port.takeIf { it != -1 } ?: 6379
 
-        RedisPubSub.init(redisUrl) { message ->
+        RedisPubSub.init(redisHost, redisPort) { message ->
             val parts = message.split("|||origin=")
             val payload = parts[0]
             try {

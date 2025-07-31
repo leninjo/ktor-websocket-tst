@@ -13,6 +13,7 @@ object RedisPubSub {
 
     fun init(
         redisHostEnv: String,
+        redisPort: Int,
         jsonHandler: (String) -> Unit
     ) {
         redisHost = redisHostEnv
