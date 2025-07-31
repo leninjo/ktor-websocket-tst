@@ -1,7 +1,7 @@
 
 plugins {
     alias(libs.plugins.kotlin.jvm)
-    kotlin("plugin.serialization") version "1.9.0"
+    kotlin("plugin.serialization") version "2.1.10"
     id("com.github.johnrengelman.shadow") version "8.1.1"
     id("application")
     id("org.graalvm.buildtools.native") version "0.11.0"
@@ -57,8 +57,8 @@ dependencies {
     implementation(libs.ktor.server.netty)
     implementation(libs.logback.classic)
     implementation(libs.ktor.server.config.yaml)
-    implementation("io.ktor:ktor-server-content-negotiation:2.3.8")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.8")
+    implementation("io.ktor:ktor-server-content-negotiation:3.1.3")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:3.1.3")
     implementation("redis.clients:jedis:6.0.0")
     testImplementation(libs.ktor.server.test.host)
     testImplementation(libs.kotlin.test.junit)
