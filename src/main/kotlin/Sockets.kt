@@ -34,7 +34,9 @@ fun Application.configureSockets() {
         val connections = ConcurrentHashMap<String, DeviceConnections>()
         val json = Json { ignoreUnknownKeys = true; encodeDefaults = false; coerceInputValues = true }
 
-        RedisPubSub.init("10.0.0.3") { message ->
+        val redisUrl = System.getenv("REDIS_URL") ?: throw IllegalStateException("Missing REDIS_URL env var")
+
+        RedisPubSub.init(redisUrl) { message ->
             val parts = message.split("|||origin=")
             val payload = parts[0]
             try {

@@ -3,7 +3,6 @@ package com.example
 import kotlinx.coroutines.*
 import redis.clients.jedis.Jedis
 import redis.clients.jedis.JedisPubSub
-import java.util.concurrent.ConcurrentHashMap
 
 object RedisPubSub {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
