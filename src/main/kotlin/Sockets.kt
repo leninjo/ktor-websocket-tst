@@ -1,5 +1,6 @@
 package com.example
 
+import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
 import io.ktor.server.application.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
@@ -25,9 +26,7 @@ fun Application.configureSockets() {
         timeout = 120.seconds
         maxFrameSize = Long.MAX_VALUE
         masking = false
-        extensions {
-            install(WebSocketDeflateExtension)
-        }
+        contentConverter = KotlinxWebsocketSerializationConverter(Json)
     }
 
     routing {
