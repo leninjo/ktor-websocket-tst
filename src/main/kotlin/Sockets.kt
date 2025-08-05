@@ -1,6 +1,5 @@
 package com.example
 
-import io.ktor.serialization.kotlinx.KotlinxWebsocketSerializationConverter
 import io.ktor.server.application.*
 import io.ktor.server.routing.*
 import io.ktor.server.websocket.*
@@ -14,6 +13,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
+import redis.clients.jedis.Jedis
 import java.net.URI
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -39,6 +39,8 @@ fun Application.configureSockets() {
         val redisPort = redisUri.port.takeIf { it != -1 } ?: 6379
 
         val redisFullUrl = "redis://$redisHost:$redisPort"
+
+        val redis by lazy { Jedis(redisFullUrl) }
 
         RedisPubSub.init(redisFullUrl) { message ->
             val parts = message.split("|||origin=")
@@ -137,16 +139,18 @@ fun Application.configureSockets() {
                                     val clientId = clientIdRef.get()
                                     val device = connections.getOrPut(clientId) { DeviceConnections() }
 
+                                    redis.hset("clients:$clientId", mapOf("instanceId" to instanceId, "role" to data.role))
+
                                     when (data.role) {
                                         "web" -> {
                                             device.web = this@webSocket
-                                            println("🌐 Web client registered: $clientId")
+                                            println("🌐 Web client registered: $clientId en instancia $instanceId")
                                             safeSend(this@webSocket, "✅ Web registrada por $clientId en instancia $instanceId")
                                         }
 
                                         "app" -> {
                                             device.app = this@webSocket
-                                            println("📱 App client registered: $clientId")
+                                            println("📱 App client registered: $clientId en instancia $instanceId")
                                             safeSend(this@webSocket, "✅ App registrada por $clientId en instancia $instanceId")
                                         }
 
@@ -165,7 +169,7 @@ fun Application.configureSockets() {
                                     }
 
                                     if (base.method == Method.PRINT_VOUCHER && base.body == null) {
-                                        safeSend(this@webSocket, "❌ 'body' es obligatorio para printVoucher")
+                                        safeSend(this@webSocket, "❌ 'body' es obligatorio para PrintVoucher")
                                         continue
                                     }
 
@@ -178,8 +182,13 @@ fun Application.configureSockets() {
                                             safeSend(this@webSocket, "❌ Falló envío a App ${base.to}")
                                         }
                                     } else {
-                                        RedisPubSub.publish(text)
-                                        safeSend(this@webSocket, "❌ App ${base.to} no conectado")
+                                        val targetInstance = redis.hget("clients:${base.to}", "instanceId")
+                                        if (targetInstance != null) {
+                                            RedisPubSub.publish(text)
+                                            safeSend(this@webSocket, "📡 App ${base.to} reenviado vía Redis a instancia $targetInstance")
+                                        } else {
+                                            safeSend(this@webSocket, "❌ App ${base.to} no encontrado en ninguna instancia")
+                                        }
                                     }
                                 }
 
@@ -210,8 +219,13 @@ fun Application.configureSockets() {
                                             safeSend(this@webSocket, "❌ Falló envío a Web ${base.to}")
                                         }
                                     } else {
-                                        RedisPubSub.publish(text)
-                                        safeSend(this@webSocket, "❌ Web ${base.to} no conectado",)
+                                        val targetInstance = redis.hget("clients:${base.to}", "instanceId")
+                                        if (targetInstance != null) {
+                                            RedisPubSub.publish(text)
+                                            safeSend(this@webSocket, "📡 Web ${base.to} reenviado vía Redis a instancia $targetInstance")
+                                        } else {
+                                            safeSend(this@webSocket, "❌ Web ${base.to} no encontrado en ninguna instancia")
+                                        }
                                     }
                                 }
 
@@ -235,6 +249,7 @@ fun Application.configureSockets() {
 
                     if (device?.web == null && device?.app == null) {
                         connections.remove(clientId)
+                        redis.del("clients:$clientId")
                     }
 
                     val close = closeReason.await()
@@ -262,20 +277,20 @@ data class RegisterData(
 )
 
 enum class Method {
-    @SerialName("getTerminal")
+    @SerialName("GetTerminal")
     GET_TERMINAL,
 
-    @SerialName("getCardData")
+    @SerialName("GetCardData")
     GET_CARD_DATA,
 
-    @SerialName("printVoucher")
+    @SerialName("PrintVoucher")
     PRINT_VOUCHER
 }
 
 fun String.toMethodOrNull(): Method? = when (this) {
-    "getTerminal" -> Method.GET_TERMINAL
-    "getCardData" -> Method.GET_CARD_DATA
-    "printVoucher" -> Method.PRINT_VOUCHER
+    "GetTerminal" -> Method.GET_TERMINAL
+    "GetCardData" -> Method.GET_CARD_DATA
+    "PrintVoucher" -> Method.PRINT_VOUCHER
     else -> null
 }
 
@@ -285,14 +300,14 @@ enum class Status { success, fail }
 @Serializable
 sealed interface AppResponse
 
-@Serializable @SerialName("getTerminal")
+@Serializable @SerialName("GetTerminal")
 data class GetTerminalResponse(
     val status: Status,
     val statusMsg: String,
     val terminal: String
 ) : AppResponse
 
-@Serializable @SerialName("getCardData")
+@Serializable @SerialName("GetCardData")
 data class GetCardDataResponse(
     val status: Status,
     val statusMsg: String,
